@@ -12,10 +12,18 @@ struct ProtoColor {
 };
 
 struct TimingConfig {
-    int castDelayMs = 7000;          // CASTING -> FISHING wait after click
-    int noObjectTimeoutMs = 5000;     // both raw marker+target absent -> completion
+    // CASTING -> FISHING is now detection-driven: as soon as both raw
+    // marker and target have been continuously present for
+    // castingDetectDebounceMs (filters a single noisy frame, not a
+    // meaningful wait), the bot moves to FISHING. castMaxWaitMs is a
+    // safety ceiling only - it fires if the cast animation/detection
+    // never lands, so CASTING can't get stuck forever; it is not the
+    // normal-path trigger.
+    int castingDetectDebounceMs = 150;
+    int castMaxWaitMs = 7000;
+
+    int noObjectTimeoutMs = 2000;     // both raw marker+target absent -> completion
     int tHoldMs = 3000;               // T held duration
-    int recastWaitMs = 2000;          // wait after releasing T, before click
     int clickPulseMs = 60;            // press->release duration for a "click"
 };
 

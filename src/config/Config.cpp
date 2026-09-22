@@ -87,10 +87,10 @@ Config Config::LoadFromFile(const std::string& path) {
     GetInt(kv, "roi.height", cfg.roi.height);
     GetInt(kv, "roi.flankpixels", cfg.roi.flankPixels);
 
-    GetInt(kv, "timing.castdelayms", cfg.timing.castDelayMs);
+    GetInt(kv, "timing.castingdetectdebouncems", cfg.timing.castingDetectDebounceMs);
+    GetInt(kv, "timing.castmaxwaitms", cfg.timing.castMaxWaitMs);
     GetInt(kv, "timing.noobjecttimeoutms", cfg.timing.noObjectTimeoutMs);
     GetInt(kv, "timing.tholdms", cfg.timing.tHoldMs);
-    GetInt(kv, "timing.recastwaitms", cfg.timing.recastWaitMs);
     GetInt(kv, "timing.clickpulsems", cfg.timing.clickPulseMs);
 
     GetFloat(kv, "detection.markerminpixelscore", cfg.detection.markerMinPixelScore);
@@ -140,10 +140,10 @@ bool Config::SaveToFile(const std::string& path) const {
     file << "roi.flankPixels=" << roi.flankPixels << "\n\n";
 
     file << "[timing]\n";
-    file << "timing.castDelayMs=" << timing.castDelayMs << "\n";
+    file << "timing.castingDetectDebounceMs=" << timing.castingDetectDebounceMs << "\n";
+    file << "timing.castMaxWaitMs=" << timing.castMaxWaitMs << "\n";
     file << "timing.noObjectTimeoutMs=" << timing.noObjectTimeoutMs << "\n";
     file << "timing.tHoldMs=" << timing.tHoldMs << "\n";
-    file << "timing.recastWaitMs=" << timing.recastWaitMs << "\n";
     file << "timing.clickPulseMs=" << timing.clickPulseMs << "\n\n";
 
     file << "[detection]\n";

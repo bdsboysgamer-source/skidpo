@@ -95,7 +95,8 @@ private:
     // Bot state machine - owned exclusively by the detection thread.
     BotState m_state = BotState::Off;
     TimePoint m_stateEnteredAt{};
-    std::optional<TimePoint> m_bothAbsentSince;
+    std::optional<TimePoint> m_bothAbsentSince;   // FISHING completion timer (raw)
+    std::optional<TimePoint> m_bothPresentSince;  // CASTING -> FISHING trigger (raw)
 
     float m_captureFpsEma = 0.0f;
     float m_detectionFpsEma = 0.0f;

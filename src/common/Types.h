@@ -187,7 +187,6 @@ enum class BotState {
     Casting,
     Fishing,
     WaitT,
-    RecastWait,
 };
 
 inline const char* ToString(BotState s) {
@@ -196,7 +195,6 @@ inline const char* ToString(BotState s) {
         case BotState::Casting: return "CASTING";
         case BotState::Fishing: return "FISHING";
         case BotState::WaitT: return "WAIT_T";
-        case BotState::RecastWait: return "RECAST_WAIT";
     }
     return "?";
 }

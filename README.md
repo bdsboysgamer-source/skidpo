@@ -51,19 +51,23 @@ recompiling.
 
 ## Behavior
 
-State machine: `OFF -> CASTING -> FISHING -> WAIT_T -> RECAST_WAIT -> CASTING -> ...`
+State machine: `OFF -> CASTING -> FISHING -> WAIT_T -> CASTING -> ...`
 
-- **OFF -> CASTING**: on enable, a single left-click pulse, then wait
-  `castDelayMs` (default 7000ms).
+- **OFF -> CASTING**: on enable, a single left-click pulse.
+- **CASTING -> FISHING**: detection-driven, not a fixed wait - moves to
+  FISHING as soon as raw marker and target have both been continuously
+  present for `castingDetectDebounceMs` (default 150ms, just filters a
+  single noisy frame). `castMaxWaitMs` (default 7000ms) is a safety
+  ceiling only, in case the cast animation or detection never lands, so
+  this state can't get stuck forever.
 - **FISHING**: the controller continuously holds/releases the left mouse
   button to keep the tracked marker inside the tracked target band. The
-  5-second no-object completion timer (`noObjectTimeoutMs`) is driven
-  **only** by raw per-frame detections of marker+target both being absent
-  - the temporal tracker's coasted/predicted state can never satisfy or
-  reset this timer by itself.
-- **WAIT_T**: mouse released, `T` held for `tHoldMs` (default 3000ms).
-- **RECAST_WAIT**: wait `recastWaitMs` (default 2000ms), then one click
-  pulse, back to `CASTING`.
+  no-object completion timer (`noObjectTimeoutMs`, default 2000ms) is
+  driven **only** by raw per-frame detections of marker+target both being
+  absent - the temporal tracker's coasted/predicted state can never
+  satisfy or reset this timer by itself.
+- **WAIT_T**: mouse released, `T` held for `tHoldMs` (default 3000ms),
+  then one click pulse, straight back to `CASTING`.
 
 Disabling the bot (F1) or exiting (F2) at any point immediately releases
 both the mouse button and `T`.
@@ -96,16 +100,27 @@ DXGI Desktop Duplication  -->   newest-frame mailbox  -->    Detector (raw, stat
   the ROI, copies only the `roi.width + 2*flank` x `roi.height` sub-rect
   via `CopySubresourceRegion` into a CPU-readable staging texture, detects
   frames with no new desktop content and skips them.
-- `src/detection/` - stateless per-frame detector. `ColorModel` scores
-  pixels against the three prototype colors (hue-weighted, tolerant of the
-  overlay's semi-transparent blending) plus a local-background deviation
-  term sampled from the left/right flank columns. `CandidateScoring` turns
-  the resulting score grid into a binary+gap-bridged mask and finds
-  connected components spanning multiple bar columns (not a single-pixel
-  line), scored by height, column coverage, fill ratio, and edge contrast.
-  `Detector` runs this independently for target (color+background-relative)
-  and marker (brightness/neutrality vs. local background), so the marker
-  stays detectable even overlapping the target.
+- `src/detection/` - stateless per-frame detector, using two different
+  strategies for the two elements:
+  - **Target**: border-based, not fill-based. The target zone's left
+    border renders as a solid (non-alpha-blended) run of ~24 vertically
+    consecutive, near-identical pixels at a known fixed column (the GUI
+    doesn't move), unlike the semi-transparent fill (which testing showed
+    is unreliable to classify - its unlit tint can resemble the lit tint
+    depending on background). `Detector::Detect` scans that column (plus
+    a couple of neighbors for redundancy) for a run of the expected
+    length, and projects its color onto the axis between the game's own
+    two known in-zone/out-of-zone colors - which also gives a direct 0..1
+    "is the marker in the zone right now" reading
+    (`DetectionResult::targetInZoneColorFraction`), independent of
+    comparing marker vs. target position.
+  - **Marker**: `ColorModel::MarkerLikelihood01` scores brightness/
+    neutrality against the local flank background; `CandidateScoring`
+    turns that into a binary+gap-bridged mask and finds connected
+    components spanning multiple bar columns (not a single-pixel line),
+    scored by height, column coverage, fill ratio, and edge contrast. This
+    stays independent of the target's own classification, so the marker
+    remains detectable even while overlapping the target.
 - `src/tracking/Tracker.h` - alpha-beta filter producing smoothed/predicted
   bands for **control only**; documented and enforced by convention never
   to be the source of truth for "is it really gone" (that's raw detection,
@@ -117,11 +132,19 @@ DXGI Desktop Duplication  -->   newest-frame mailbox  -->    Detector (raw, stat
   is safe from any thread/any number of times and is called on disable,
   exit, and both C++ and structured (SEH) exceptions in the detection
   thread.
-- `src/ui/StatusWindow.h` - the visible GUI: status readout plus a debug
-  schematic panel, drawn inside our own window (never overlapping the
-  captured screen pixels, so there is no feedback loop into the detector).
-  All debug drawing goes through `RoiLocalYToDebugY()`/`RoiLocalXToDebugX()`
-  - never a raw roiLocal value used as a debug pixel coordinate directly.
+- `src/ui/StatusWindow.h` - the main control window: text status readout
+  (state, timers, raw/tracked values, fps, input state) and the F1/F2/F3
+  global hotkeys.
+- `src/ui/DebugOverlay.h` - a borderless, click-through, always-on-top
+  window drawn directly over the game near (and, via
+  `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`, ON TOP of) the real
+  fishing bar - visible to the human eye but excluded from every
+  screen-capture API including our own Desktop Duplication, so there is no
+  feedback loop into the detector even though it draws over the live ROI.
+  Falls back to drawing nothing inside the ROI if that API ever isn't
+  available. All debug drawing goes through
+  `RoiLocalYToDebugY()`/`RoiLocalXToDebugX()`/`RoiLocalYToScreenY()` -
+  never a raw roiLocal value used as a pixel coordinate directly.
 - `src/app/App.h` - owns the threads, the bot state machine, and the
   thread-safe `UiSnapshot` the UI polls on a timer.
 
@@ -129,14 +152,17 @@ DXGI Desktop Duplication  -->   newest-frame mailbox  -->    Detector (raw, stat
 
 | Section | Key | Default | Meaning |
 |---|---|---|---|
-| roi | screenX/screenY/width/height | 1415,319,49,384 | fishing bar rect, screen space |
-| roi | flankPixels | 16 | background sample margin each side |
-| timing | castDelayMs | 7000 | CASTING -> FISHING wait |
-| timing | noObjectTimeoutMs | 5000 | raw both-absent -> completion |
+| roi | screenX/screenY/width/height | 1410,315,59,390 | fishing bar rect, screen space |
+| roi | flankPixels | 16 | background sample margin each side (marker only) |
+| timing | castingDetectDebounceMs | 150 | CASTING -> FISHING: both raw-present this long |
+| timing | castMaxWaitMs | 7000 | CASTING safety ceiling if detection never lands |
+| timing | noObjectTimeoutMs | 2000 | raw both-absent -> completion |
 | timing | tHoldMs | 3000 | T hold duration |
-| timing | recastWaitMs | 2000 | wait before recast click |
-| detection | colorTolerance | 0.55 | prototype-color match looseness |
-| detection | target/markerMin* | see file | geometric acceptance thresholds |
+| detection | targetBorderColumnRoiLocalX/SearchWidth | 0, 3 | which column(s) the target border is sampled from |
+| detection | targetBorderRunHeightPx/TolerancePx | 24, 6 | expected flat border-run height |
+| detection | targetBorderUniformityTolerance | 6 | max RGB drift within a run to still count as "flat" |
+| detection | targetBorderColorAxisTolerance/Margin | 30, 0.3 | how loosely the run's color must sit on the in-zone<->out-of-zone axis |
+| detection | marker* | see file | geometric acceptance thresholds (unchanged, works well) |
 | tracking | maxJumpPxPerSec | 900 | implausible-jump rejection |
 | tracking | missTimeoutMs | 700 | coast duration before "stale" |
 | controller | deadbandPx | 10 | no-toggle band around target center |
@@ -148,14 +174,12 @@ DXGI Desktop Duplication  -->   newest-frame mailbox  -->    Detector (raw, stat
 - Input targets whatever window currently has focus (`SendInput`), per the
   v1 scope in the brief; `InputManager` is structured so a future version
   could target a specific `HWND`/process without touching callers.
-- The color-prototype/background-deviation model was built from the three
-  sample colors given in the brief and validated only by static review and
-  a startup smoke test in this environment (no live game window was
-  available to test against here) - the detector's thresholds in
-  `config.ini` are the first thing to tune against a real capture if
-  target/marker confidence looks off in the debug panel.
-- No live calibration UI (section 19 of the brief marks this optional for
-  v1); the prototypes and tolerance are edit-config-and-relaunch only.
+- The target border's expected column, run height, and the two in-zone/
+  out-of-zone colors (`detection.targetBorderColor*`) were measured
+  directly against the live game and are believed accurate, but they are a
+  fixed calibration - if the game's UI theme/resolution/scaling changes,
+  these would need re-measuring.
+- No live calibration UI; thresholds are edit-config-and-relaunch only.
 - Monitor selection picks the DXGI output containing the ROI's top-left
   point at startup; changing which monitor the game is on requires a
   restart (or edit `roi.screenX/screenY` and restart).

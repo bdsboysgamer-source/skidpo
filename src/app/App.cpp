@@ -257,6 +257,7 @@ void App::TickStateMachine(const DetectionResult& raw, TimePoint now) {
             m_controller.Reset();
             m_tracker.Reset();
             m_bothAbsentSince.reset();
+            m_bothPresentSince.reset();
             EnterState(BotState::Off, now);
         }
         return;
@@ -265,11 +266,33 @@ void App::TickStateMachine(const DetectionResult& raw, TimePoint now) {
     switch (m_state) {
         case BotState::Off: {
             m_input.ClickMouseLeftPulse(m_config.timing.clickPulseMs);
+            m_bothPresentSince.reset();
             EnterState(BotState::Casting, now);
             break;
         }
         case BotState::Casting: {
-            if (ElapsedMs(m_stateEnteredAt, now) >= static_cast<float>(m_config.timing.castDelayMs)) {
+            // Detection-driven: move to FISHING as soon as both marker and
+            // target have been continuously present (raw) for a short
+            // debounce (filters a single noisy frame - not a meaningful
+            // wait), rather than a fixed cast-animation duration.
+            // castMaxWaitMs is a safety ceiling only, in case detection
+            // never lands, so this state can't get stuck forever.
+            bool bothPresentRaw = raw.marker.present && raw.target.present;
+            if (bothPresentRaw) {
+                if (!m_bothPresentSince.has_value()) {
+                    m_bothPresentSince = now;
+                }
+                if (ElapsedMs(*m_bothPresentSince, now) >= static_cast<float>(m_config.timing.castingDetectDebounceMs)) {
+                    m_bothAbsentSince.reset();
+                    EnterState(BotState::Fishing, now);
+                    break;
+                }
+            } else {
+                m_bothPresentSince.reset();
+            }
+
+            if (ElapsedMs(m_stateEnteredAt, now) >= static_cast<float>(m_config.timing.castMaxWaitMs)) {
+                LogLine("CASTING: detection never landed within castMaxWaitMs - proceeding to FISHING anyway");
                 m_bothAbsentSince.reset();
                 EnterState(BotState::Fishing, now);
             }
@@ -301,13 +324,8 @@ void App::TickStateMachine(const DetectionResult& raw, TimePoint now) {
         case BotState::WaitT: {
             if (ElapsedMs(m_stateEnteredAt, now) >= static_cast<float>(m_config.timing.tHoldMs)) {
                 m_input.SetKeyT(false);
-                EnterState(BotState::RecastWait, now);
-            }
-            break;
-        }
-        case BotState::RecastWait: {
-            if (ElapsedMs(m_stateEnteredAt, now) >= static_cast<float>(m_config.timing.recastWaitMs)) {
                 m_input.ClickMouseLeftPulse(m_config.timing.clickPulseMs);
+                m_bothPresentSince.reset();
                 EnterState(BotState::Casting, now);
             }
             break;
