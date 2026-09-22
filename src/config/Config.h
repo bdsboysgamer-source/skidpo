@@ -50,8 +50,20 @@ struct DetectionConfig {
 
     ProtoColor targetBorderColorInZone = {0x51, 0xDE, 0x09};    // marker inside the target
     ProtoColor targetBorderColorOutOfZone = {0xDA, 0xC8, 0x09}; // marker outside the target
+    // Used as a hard gate ONLY when no usable prior position is available
+    // (see TargetPriorHint) - a strongly-colored background (e.g. deep
+    // blue) was found to shift the border's rendered color ~5x past this
+    // tolerance, which a fixed color axis alone can never absorb. With a
+    // prior, color is used as a soft confidence booster instead.
     float targetBorderColorAxisTolerance = 30.0f; // max perpendicular RGB distance from the in-zone<->out-of-zone color axis
     float targetBorderColorAxisMargin = 0.3f;     // how far past each endpoint (as a fraction of the axis length) is still accepted
+
+    // Minimum per-frame search radius around the prior position, even at
+    // very high detection FPS/tiny dt (where maxJumpPxPerSec*dt alone
+    // would be near zero) - absorbs sub-pixel jitter/quantization in the
+    // rendered position so a genuinely-stationary target isn't rejected
+    // for being technically a pixel or two from the predicted center.
+    float targetPriorSearchMinRadiusPx = 24.0f;
 
     int markerMinHeightPx = 3;
     int markerMinColumns = 17;           // out of roi.width columns (~28% of the 59px bar, same ratio as before)

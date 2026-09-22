@@ -222,10 +222,26 @@ void App::RunDetectionLoop() {
             if (dt > 0.0001f) {
                 m_detectionFpsEma = m_detectionFpsEma * 0.9f + (1.0f / dt) * 0.1f;
             }
+            float clampedDt = std::max(dt, 1.0f / 240.0f);
+
+            // Build the target search prior from the tracker's current
+            // (pre-update) prediction, so this frame's detection can use
+            // spatial continuity - the target can only move a little since
+            // last frame - to stay locked on even when a strongly-colored
+            // background pushes the color match alone out of tolerance.
+            // See TargetPriorHint for why this doesn't make Detector
+            // stateful: it's an explicit input, built fresh every call.
+            TargetPriorHint targetPrior;
+            const TrackedBand& priorTarget = m_tracker.Target();
+            if (priorTarget.hasData) {
+                targetPrior.valid = true;
+                targetPrior.roiLocalCenterY = priorTarget.centerY;
+                targetPrior.maxDistancePx = m_config.tracking.maxJumpPxPerSec * clampedDt;
+            }
 
             bool debugMode = m_debugMode.load(std::memory_order_relaxed);
-            DetectionResult raw = detector.Detect(frame, debugMode);
-            m_tracker.Update(raw, now, std::max(dt, 1.0f / 240.0f));
+            DetectionResult raw = detector.Detect(frame, debugMode, targetPrior);
+            m_tracker.Update(raw, now, clampedDt);
 
             TickStateMachine(raw, now);
             UpdateSnapshot(raw, now);

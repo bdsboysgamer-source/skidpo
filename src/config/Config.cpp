@@ -101,6 +101,7 @@ Config Config::LoadFromFile(const std::string& path) {
     GetFloat(kv, "detection.targetborderuniformitytolerance", cfg.detection.targetBorderUniformityTolerance);
     GetFloat(kv, "detection.targetbordercoloraxistolerance", cfg.detection.targetBorderColorAxisTolerance);
     GetFloat(kv, "detection.targetbordercoloraxismargin", cfg.detection.targetBorderColorAxisMargin);
+    GetFloat(kv, "detection.targetpriorsearchminradiuspx", cfg.detection.targetPriorSearchMinRadiusPx);
     GetInt(kv, "detection.markerminheightpx", cfg.detection.markerMinHeightPx);
     GetInt(kv, "detection.markermincolumns", cfg.detection.markerMinColumns);
     GetFloat(kv, "detection.markerminfillratio", cfg.detection.markerMinFillRatio);
@@ -155,6 +156,7 @@ bool Config::SaveToFile(const std::string& path) const {
     file << "detection.targetBorderUniformityTolerance=" << detection.targetBorderUniformityTolerance << "\n";
     file << "detection.targetBorderColorAxisTolerance=" << detection.targetBorderColorAxisTolerance << "\n";
     file << "detection.targetBorderColorAxisMargin=" << detection.targetBorderColorAxisMargin << "\n";
+    file << "detection.targetPriorSearchMinRadiusPx=" << detection.targetPriorSearchMinRadiusPx << "\n";
     file << "detection.markerMinHeightPx=" << detection.markerMinHeightPx << "\n";
     file << "detection.markerMinColumns=" << detection.markerMinColumns << "\n";
     file << "detection.markerMinFillRatio=" << detection.markerMinFillRatio << "\n";

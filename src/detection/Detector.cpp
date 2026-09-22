@@ -159,7 +159,8 @@ AxisProjection ProjectOntoColorAxis(RgbColor color, RgbColor colorA, RgbColor co
 
 } // namespace
 
-DetectionResult Detector::Detect(const CapturedFrame& frame, bool computeDebugMasks) const {
+DetectionResult Detector::Detect(const CapturedFrame& frame, bool computeDebugMasks,
+                                  const TargetPriorHint& targetPrior) const {
     DetectionResult result;
     result.frameId = frame.frameId;
     result.timestamp = frame.timestamp;
@@ -202,6 +203,10 @@ DetectionResult Detector::Detect(const CapturedFrame& frame, bool computeDebugMa
         int colStart = std::max(0, det.targetBorderColumnRoiLocalX);
         int colEnd = std::min(roi.width - 1, colStart + std::max(1, det.targetBorderColumnSearchWidth) - 1);
 
+        float priorRadius = targetPrior.valid
+            ? std::max(det.targetPriorSearchMinRadiusPx, targetPrior.maxDistancePx)
+            : 0.0f;
+
         for (int roiLocalX = colStart; roiLocalX <= colEnd; ++roiLocalX) {
             int captureLocalX = RoiLocalXToCaptureLocalX(roi, roiLocalX);
             std::vector<RgbColor> column(roi.height);
@@ -213,12 +218,35 @@ DetectionResult Detector::Detect(const CapturedFrame& frame, bool computeDebugMa
                 if (lengthDiff > det.targetBorderRunHeightTolerancePx) continue;
 
                 AxisProjection proj = ProjectOntoColorAxis(run.avgColor, colorA, colorB);
-                if (proj.perpDist > det.targetBorderColorAxisTolerance) continue;
-                if (proj.t < -det.targetBorderColorAxisMargin || proj.t > 1.0f + det.targetBorderColorAxisMargin) continue;
-
                 float lengthScore = Clamp01(1.0f - static_cast<float>(lengthDiff) / std::max(1, det.targetBorderRunHeightTolerancePx));
                 float axisFitScore = Clamp01(1.0f - proj.perpDist / std::max(1.0f, det.targetBorderColorAxisTolerance));
-                float score = lengthScore * axisFitScore;
+
+                float score;
+                if (targetPrior.valid) {
+                    // Spatially-informed: a structurally-correct run near
+                    // where the target was last seen is trusted even if
+                    // its color has drifted well past
+                    // targetBorderColorAxisTolerance (a strongly-colored
+                    // background, e.g. deep blue, was found to shift it
+                    // ~5x past that tolerance) - color only boosts
+                    // confidence here, it doesn't gate acceptance. The
+                    // target can only move a little between two
+                    // consecutive frames, so proximity to the prior is
+                    // the substitute discriminator.
+                    float runCenterY = static_cast<float>(run.start + run.end) * 0.5f;
+                    float priorDist = std::fabs(runCenterY - targetPrior.roiLocalCenterY);
+                    if (priorDist > priorRadius) continue;
+                    float priorProximityScore = Clamp01(1.0f - priorDist / priorRadius);
+                    score = lengthScore * priorProximityScore * (0.5f + 0.5f * axisFitScore);
+                } else {
+                    // No usable prior (re-acquiring after a genuine
+                    // absence) - color match against the known axis is
+                    // the only available discriminator, so it's a hard
+                    // gate here, same as before.
+                    if (proj.perpDist > det.targetBorderColorAxisTolerance) continue;
+                    if (proj.t < -det.targetBorderColorAxisMargin || proj.t > 1.0f + det.targetBorderColorAxisMargin) continue;
+                    score = lengthScore * axisFitScore;
+                }
 
                 if (score > bestScore) {
                     bestScore = score;
@@ -237,7 +265,13 @@ DetectionResult Detector::Detect(const CapturedFrame& frame, bool computeDebugMa
             result.target.confidence = bestScore;
             result.target.supportingColumns = colEnd - colStart + 1;
             result.target.heightPx = bestRunEnd - bestRunStart + 1;
-            result.targetInZoneColorFraction = Clamp01(bestProjection.t);
+            // Only trust the in-zone/out-of-zone color reading itself when
+            // the winning run's color is reasonably close to the known
+            // axis - a prior-assisted match can win on structure+proximity
+            // alone with a poor color fit, and reporting a t from far off
+            // the axis would be a meaningless number dressed up as data.
+            result.targetInZoneColorFraction = (bestProjection.perpDist <= det.targetBorderColorAxisTolerance)
+                ? Clamp01(bestProjection.t) : -1.0f;
         }
     }
 
