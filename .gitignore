@@ -1,0 +1,5 @@
+/build/
+/config/
+*.obj
+*.pdb
+*.ilk
