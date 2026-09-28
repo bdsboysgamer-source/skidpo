@@ -838,6 +838,7 @@ void DebugOverlay::RenderKeybindHelp(Graphics& g) {
         { L"F4", L"switch screen (1/2)" },
         { L"H+6", L"Sell Runo" },
         { L"G+6", L"Buy Fish Head" },
+        { L"H+7", L"Sell Shiro" },
     };
 
     SolidBrush keyBrush(kTargetAccent);

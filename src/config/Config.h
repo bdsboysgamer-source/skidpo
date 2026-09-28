@@ -2,6 +2,7 @@
 
 #include "../common/Types.h"
 #include <string>
+#include <vector>
 #include <cstdint>
 
 namespace fb {
@@ -9,6 +10,33 @@ namespace fb {
 // Color prototype (0xRRGGBB packed, stored unpacked for convenience).
 struct ProtoColor {
     uint8_t r, g, b;
+};
+
+// One step of a macro sequence (see MacroConfig). kind/vk/clickX/clickY are
+// fixed in code (Config::Defaults()) - only durationSec/delayAfterSec are
+// user-editable, from the in-app macro config tabs (see ui/MacroConfigPanel.h)
+// or directly in config.ini.
+enum class MacroStepKind { Tap, Hold, Click, RepeatClick };
+struct MacroStepConfig {
+    MacroStepKind kind;
+    uint8_t vk = 0;        // for Tap/Hold
+    int clickX = 0;        // for Click/RepeatClick (absolute screen coordinates)
+    int clickY = 0;
+
+    // Hold: how long the key is held down. RepeatClick: total duration of
+    // the autoclick burst (individual clicks within it are paced at a
+    // fixed 150ms, not user-configurable - see App::TickMacro). Unused (0)
+    // for Tap/Click.
+    float durationSec = 0.0f;
+
+    // Pause after this step completes, before the next one starts - every
+    // step kind has this, independently editable per step.
+    float delayAfterSec = 1.0f;
+};
+
+struct MacroConfig {
+    std::string name;
+    std::vector<MacroStepConfig> steps;
 };
 
 struct TimingConfig {
@@ -26,7 +54,6 @@ struct TimingConfig {
     int postFishDelayMs = 2000;       // FISHING completion -> WAIT_T: mouse already released, T not yet held
     int tHoldMs = 3000;               // T held duration
     int clickPulseMs = 60;            // press->release duration for a "click"
-    int macroStepDelayMs = 1000;      // macro sequences: delay after each step before the next one starts
     int macroMoveDurationMs = 200;    // macro sequences: cursor glide time for each click's move-to-target
 
     // Caps how often a captured frame actually gets run through
@@ -123,6 +150,9 @@ struct Config {
     TrackingConfig tracking;
     ControllerConfig controller;
     UiConfig ui;
+    MacroConfig macroA; // "Sell Runo", H+6
+    MacroConfig macroB; // "Buy Fish Head", G+6
+    MacroConfig macroC; // "Sell Shiro", H+7
 
     static Config Defaults();
 

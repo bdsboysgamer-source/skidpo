@@ -56,28 +56,51 @@ see `App::CheckMacroHotkeys` in `src/app/App.cpp` for why: RegisterHotKey
 can only express one non-modifier key plus Alt/Ctrl/Shift/Win, not an
 arbitrary chord of plain keys):
 
-- **H+6** - toggles **Sell Runo** (macro A): a fixed key/click sequence
-  (`kMacroSequenceA` in `src/app/App.cpp`) with a 1-second pause after
-  every step.
-- **G+6** - toggles **Buy Fish Head** (macro B): a second, independent
-  sequence (`kMacroSequenceB`), same timing/looping/input behavior as
-  Sell Runo.
+- **H+6** - toggles **Sell Runo** (macro A)
+- **G+6** - toggles **Buy Fish Head** (macro B)
+- **H+7** - toggles **Sell Shiro** (macro C) - a duplicate of Sell Runo
+  with the Hold D/Hold A steps swapped for Hold W/Hold S
 
-Either macro, once started, loops indefinitely (wraps back to its first
-step after the last) rather than running once - pressing that same macro's
+Each is a fixed sequence of key/click steps (`DefaultMacroA/B/C` in
+`src/config/Config.cpp`), independently configurable from its own tab in
+the status window (see below). A run of repeated clicks on the same spot
+is a single **RepeatClick** step: an autoclicker burst at a fixed 150ms
+cadence for a configurable duration, not a fixed click count.
+
+A macro, once started, loops indefinitely (wraps back to its first step
+after the last) rather than running once - pressing that same macro's
 chord again is what stops it, safely releasing any currently-held key
-first so nothing is left stuck down. Starting one while the other is
-already running is ignored (only one macro runs at a time). Mutually
-exclusive with the fishing state machine's own input control while either
+first so nothing is left stuck down. Starting one while a different one
+is already running is ignored (only one macro runs at a time). Mutually
+exclusive with the fishing state machine's own input control while it
 runs (the fishing loop is paused, not fought over); the left mouse button
-is released first as a clean slate. Each click step moves the cursor
-smoothly (ease-in-out, over `timing.macroMoveDurationMs`, default 200ms)
-from wherever it currently is to the target position rather than
-teleporting there.
+is released first as a clean slate. Every Click/RepeatClick step moves
+the cursor smoothly (ease-in-out, over `timing.macroMoveDurationMs`,
+default 200ms) from wherever it currently is to the target position
+rather than teleporting there - a RepeatClick burst only does this once,
+at the start of the burst, then pulses the button in place.
 
 When debug mode is on, a small always-on-top block listing all hotkeys and
 macro chords is pinned to the primary monitor's top-left corner,
 independent of where the ROI/debug overlay itself is positioned.
+
+### Status window tabs
+
+The status window (`src/ui/StatusWindow.h`) has a tab strip: **Status**
+(the original text readout - state, timers, ROI, detection values, input
+state, fps) plus one tab per macro (**Sell Runo**, **Buy Fish Head**,
+**Sell Shiro**). Each macro tab (`src/ui/MacroConfigPanel.h`) lists that
+macro's steps with two independently editable fields per step:
+
+- **Delay (s)** - the pause after that step, before the next one starts.
+  Every step has one.
+- **Dur (s)** - only shown for Hold and RepeatClick steps: how long the
+  key is held, or how long the autoclick burst runs.
+
+A step's kind/keys/click coordinates are fixed in code, not editable here.
+Clicking **Save** on a tab applies its edited values to the running macro
+immediately (even mid-run) and persists the whole config to
+`config/config.ini`, so changes survive a restart.
 
 `config/config.ini` is created next to the executable on first run (from
 built-in defaults) and reloaded on every launch; edit it to tune the ROI,

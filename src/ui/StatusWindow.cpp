@@ -1,5 +1,7 @@
 #include "StatusWindow.h"
 
+#include <commctrl.h>
+
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
@@ -39,7 +41,9 @@ std::wstring FormatTracked(const wchar_t* label, const TrackedBand& b) {
 }
 } // namespace
 
-StatusWindow::StatusWindow(App& app, HINSTANCE hInstance) : m_app(app), m_hInstance(hInstance) {}
+StatusWindow::StatusWindow(App& app, HINSTANCE hInstance)
+    : m_app(app), m_hInstance(hInstance)
+    , m_macroPanelA(app, App::MacroId::A), m_macroPanelB(app, App::MacroId::B), m_macroPanelC(app, App::MacroId::C) {}
 
 StatusWindow::~StatusWindow() {
     if (m_hwnd) {
@@ -74,6 +78,12 @@ LRESULT StatusWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_PAINT:
             OnPaint(hwnd);
             return 0;
+        case WM_NOTIFY:
+            OnNotify(lParam);
+            return 0;
+        case WM_COMMAND:
+            OnCommand(wParam);
+            return 0;
         case WM_ERASEBKGND:
             return 1; // avoid flicker; we paint the whole client area ourselves
         case WM_CLOSE:
@@ -106,8 +116,23 @@ bool StatusWindow::Create(int nCmdShow) {
         }
     }
 
-    m_hwnd = CreateWindowExW(0, kClassName, L"Fishing Bot", WS_OVERLAPPEDWINDOW,
-                              CW_USEDEFAULT, CW_USEDEFAULT, 480, 460,
+    // Sized from a desired CLIENT area (not the outer window) via
+    // AdjustWindowRect, since the macro config tabs need a known, fairly
+    // wide/tall client area to lay their rows out in (see MacroConfigPanel);
+    // 600x460 comfortably fits the longer macro (11 rows) plus the tab strip.
+    RECT desiredClient{0, 0, 600, 460};
+    AdjustWindowRect(&desiredClient, WS_OVERLAPPEDWINDOW, FALSE);
+    int outerW = desiredClient.right - desiredClient.left;
+    int outerH = desiredClient.bottom - desiredClient.top;
+
+    // WS_CLIPCHILDREN: without it, this window's own WM_PAINT (full-client
+    // black fill + status text, re-triggered by every ~150ms timer tick)
+    // paints straight over the tab control/macro panel child windows'
+    // pixels, which then have to redraw on top a moment later - a
+    // continuous visible flicker once there were real child controls to
+    // flicker over.
+    m_hwnd = CreateWindowExW(0, kClassName, L"Fishing Bot", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                              CW_USEDEFAULT, CW_USEDEFAULT, outerW, outerH,
                               nullptr, nullptr, m_hInstance, this);
     if (!m_hwnd) {
         std::wcerr << L"CreateWindowExW failed, error=" << GetLastError() << std::endl;
@@ -133,6 +158,41 @@ void StatusWindow::OnCreate(HWND hwnd) {
         std::wcerr << L"RegisterHotKey(F4) failed, error=" << GetLastError() << std::endl;
     }
     SetTimer(hwnd, kTimerId, static_cast<UINT>(std::max(30, m_app.UiRefreshIntervalMs())), nullptr);
+
+    INITCOMMONCONTROLSEX icc{};
+    icc.dwSize = sizeof(icc);
+    icc.dwICC = ICC_TAB_CLASSES;
+    InitCommonControlsEx(&icc);
+
+    RECT clientRect;
+    GetClientRect(hwnd, &clientRect);
+    m_tabControl = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE,
+        0, 0, clientRect.right, kTabStripHeight, hwnd,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kTabControlId)), m_hInstance, nullptr);
+    SendMessageW(m_tabControl, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+
+    wchar_t tabStatus[] = L"Status";
+    wchar_t tabA[] = L"Sell Runo";
+    wchar_t tabB[] = L"Buy Fish Head";
+    wchar_t tabC[] = L"Sell Shiro";
+    TCITEMW tie{};
+    tie.mask = TCIF_TEXT;
+    tie.pszText = tabStatus;
+    TabCtrl_InsertItem(m_tabControl, 0, &tie);
+    tie.pszText = tabA;
+    TabCtrl_InsertItem(m_tabControl, 1, &tie);
+    tie.pszText = tabB;
+    TabCtrl_InsertItem(m_tabControl, 2, &tie);
+    tie.pszText = tabC;
+    TabCtrl_InsertItem(m_tabControl, 3, &tie);
+
+    RECT panelBounds{0, kContentTop, clientRect.right, clientRect.bottom};
+    m_macroPanelA.Create(hwnd, m_hInstance, kMacroPanelAIdBase, panelBounds);
+    m_macroPanelB.Create(hwnd, m_hInstance, kMacroPanelBIdBase, panelBounds);
+    m_macroPanelC.Create(hwnd, m_hInstance, kMacroPanelCIdBase, panelBounds);
+
+    TabCtrl_SetCurSel(m_tabControl, 0);
+    m_activeTab = 0;
 }
 
 void StatusWindow::OnDestroy() {
@@ -171,6 +231,27 @@ void StatusWindow::OnTimer() {
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
+void StatusWindow::OnNotify(LPARAM lParam) {
+    const NMHDR* hdr = reinterpret_cast<const NMHDR*>(lParam);
+    if (hdr->hwndFrom == m_tabControl && hdr->code == TCN_SELCHANGE) {
+        OnTabChanged();
+    }
+}
+
+void StatusWindow::OnCommand(WPARAM wParam) {
+    if (m_macroPanelA.HandleCommand(wParam)) return;
+    if (m_macroPanelB.HandleCommand(wParam)) return;
+    m_macroPanelC.HandleCommand(wParam);
+}
+
+void StatusWindow::OnTabChanged() {
+    m_activeTab = TabCtrl_GetCurSel(m_tabControl);
+    m_macroPanelA.SetVisible(m_activeTab == 1);
+    m_macroPanelB.SetVisible(m_activeTab == 2);
+    m_macroPanelC.SetVisible(m_activeTab == 3);
+    InvalidateRect(m_hwnd, nullptr, TRUE);
+}
+
 void StatusWindow::OnPaint(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC hdc = BeginPaint(hwnd, &ps);
@@ -200,6 +281,8 @@ void StatusWindow::OnPaint(HWND hwnd) {
 }
 
 void StatusWindow::Render(HDC hdc, const RECT& clientRect, const UiSnapshot& snap) {
+    if (m_activeTab != 0) return; // the macro config tabs are real child controls, not this custom paint
+
     SetBkMode(hdc, TRANSPARENT);
 
     HFONT font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
@@ -207,7 +290,7 @@ void StatusWindow::Render(HDC hdc, const RECT& clientRect, const UiSnapshot& sna
                               FIXED_PITCH | FF_MODERN, L"Consolas");
     HGDIOBJ oldFont = SelectObject(hdc, font);
 
-    RenderStatusText(hdc, 16, 12, snap);
+    RenderStatusText(hdc, 16, kContentTop, snap);
     (void)clientRect;
 
     SelectObject(hdc, oldFont);
@@ -266,12 +349,13 @@ void StatusWindow::RenderStatusText(HDC hdc, int x, int y, const UiSnapshot& sna
     ++line;
 
     if (snap.macroRunning) {
+        const wchar_t* names[] = { L"Sell Runo (H+6)", L"Buy Fish Head (G+6)", L"Sell Shiro (H+7)" };
         std::wostringstream macroSs;
-        macroSs << (snap.activeMacroId == 0 ? L"Sell Runo (H+6)" : L"Buy Fish Head (G+6)")
+        macroSs << names[std::clamp(snap.activeMacroId, 0, 2)]
                 << L": running (step " << (snap.macroStepIndex + 1) << L"/" << snap.macroStepCount << L")";
         put(macroSs.str(), RGB(235, 170, 235));
     } else {
-        put(L"Macro: idle (H+6 Sell Runo / G+6 Buy Fish Head)", RGB(140, 140, 150));
+        put(L"Macro: idle (H+6 Sell Runo / G+6 Buy Fish Head / H+7 Sell Shiro)", RGB(140, 140, 150));
     }
 
     if (!snap.statusMessage.empty()) {
@@ -279,7 +363,7 @@ void StatusWindow::RenderStatusText(HDC hdc, int x, int y, const UiSnapshot& sna
     }
 
     put(L"", RGB(0,0,0));
-    put(L"F1 bot  F2 exit  F3 debug  F4 screen  H+6 sell runo  G+6 buy fish head", RGB(140, 140, 140));
+    put(L"F1 bot  F2 exit  F3 debug  F4 screen  H+6/G+6/H+7 macros", RGB(140, 140, 140));
 }
 
 } // namespace fb

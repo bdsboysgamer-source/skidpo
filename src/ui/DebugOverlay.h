@@ -112,7 +112,7 @@ private:
     static constexpr int kHelpX = 10;
     static constexpr int kHelpY = 10;
     static constexpr int kHelpWidth = 240;
-    static constexpr int kHelpHeight = 176;
+    static constexpr int kHelpHeight = 198; // fits 7 keybind rows - see RenderKeybindHelp
 
     mutable std::mutex m_layoutMutex;
     OverlayLayout m_layout;         // protected by m_layoutMutex - read every render frame, written on F4

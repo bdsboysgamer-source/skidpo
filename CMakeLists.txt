@@ -41,6 +41,8 @@ add_executable(fishingbot
     src/ui/StatusWindow.cpp
     src/ui/DebugOverlay.h
     src/ui/DebugOverlay.cpp
+    src/ui/MacroConfigPanel.h
+    src/ui/MacroConfigPanel.cpp
 
     src/app/App.h
     src/app/App.cpp
@@ -63,6 +65,7 @@ target_link_libraries(fishingbot PRIVATE
     user32
     gdi32
     gdiplus
+    comctl32
 )
 
 set_target_properties(fishingbot PROPERTIES

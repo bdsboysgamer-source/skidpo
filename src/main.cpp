@@ -16,6 +16,14 @@
 #include <iostream>
 #include <filesystem>
 
+// Opts the whole process into Common Controls v6 (modern visual styles and,
+// notably, full UI Automation provider support for standard controls like
+// the tab control in StatusWindow) without needing a separate .manifest
+// resource file - the linker embeds this as the executable's manifest.
+#pragma comment(linker, \
+    "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' " \
+    "version='6.0.0.0' publicKeyToken='6595b64144ccf1df' language='*' processorArchitecture='*'\"")
+
 using namespace fb;
 
 namespace {
@@ -37,7 +45,7 @@ int main() {
     std::cout << "ROI: screen(" << config.roi.screenX << "," << config.roi.screenY << ") "
               << config.roi.width << "x" << config.roi.height << " flank=" << config.roi.flankPixels << std::endl;
 
-    App app(config);
+    App app(config, kConfigPath);
 
     HINSTANCE hInstance = GetModuleHandleW(nullptr);
     StatusWindow window(app, hInstance);

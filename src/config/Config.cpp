@@ -8,8 +8,93 @@
 
 namespace fb {
 
+namespace {
+
+constexpr uint8_t kVkT = 0x54;
+constexpr uint8_t kVkD = 0x44;
+constexpr uint8_t kVkA = 0x41;
+constexpr uint8_t kVkW = 0x57;
+constexpr uint8_t kVkS = 0x53;
+
+// ---- Default macro sequences ------------------------------------------
+// Every run of clicks on the same spot (previously "click N times") is now
+// a single RepeatClick step: an autoclicker burst at a fixed 150ms cadence
+// (see App::kRepeatClickIntervalMs) for durationSec seconds - durationSec
+// and delayAfterSec below are just starting points; both are user-editable
+// per step from the in-app macro config tabs.
+MacroConfig DefaultMacroA() {
+    MacroConfig mc;
+    mc.name = "Sell Runo";
+    mc.steps = {
+        { MacroStepKind::Tap, kVkT, 0, 0, 0.0f, 1.0f },
+        { MacroStepKind::RepeatClick, 0, 960, 921, 3.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1270, 885, 0.0f, 1.0f },
+        { MacroStepKind::RepeatClick, 0, 960, 921, 4.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1270, 925, 0.0f, 1.0f },
+        { MacroStepKind::Hold, kVkD, 0, 0, 0.5f, 1.0f },
+        { MacroStepKind::Hold, kVkT, 0, 0, 3.0f, 1.0f },
+        { MacroStepKind::Hold, kVkA, 0, 0, 0.5f, 1.0f },
+        { MacroStepKind::Tap, kVkT, 0, 0, 0.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1270, 905, 0.0f, 1.0f },
+        { MacroStepKind::RepeatClick, 0, 960, 921, 3.0f, 1.0f },
+    };
+    return mc;
+}
+
+MacroConfig DefaultMacroB() {
+    MacroConfig mc;
+    mc.name = "Buy Fish Head";
+    mc.steps = {
+        { MacroStepKind::Tap, kVkT, 0, 0, 0.0f, 1.0f },
+        { MacroStepKind::RepeatClick, 0, 960, 921, 3.0f, 1.0f },
+        { MacroStepKind::Click, 0, 775, 705, 0.0f, 1.0f },
+        { MacroStepKind::Click, 0, 775, 705, 0.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1280, 890, 0.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1280, 905, 0.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1280, 945, 0.0f, 1.0f },
+    };
+    return mc;
+}
+
+// Sell Shiro started as a duplicate of Sell Runo (DefaultMacroA) with Hold
+// D/A swapped for Hold W/S, then had its Click(1270,885) and the
+// RepeatClick(960,921) after it removed, and its next click retargeted
+// from (1270,925) to (1270,905).
+MacroConfig DefaultMacroC() {
+    MacroConfig mc;
+    mc.name = "Sell Shiro";
+    mc.steps = {
+        { MacroStepKind::Tap, kVkT, 0, 0, 0.0f, 1.0f },
+        { MacroStepKind::RepeatClick, 0, 960, 921, 3.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1270, 905, 0.0f, 1.0f },
+        { MacroStepKind::Hold, kVkW, 0, 0, 0.5f, 1.0f },
+        { MacroStepKind::Hold, kVkT, 0, 0, 3.0f, 1.0f },
+        { MacroStepKind::Hold, kVkS, 0, 0, 0.5f, 1.0f },
+        { MacroStepKind::Tap, kVkT, 0, 0, 0.0f, 1.0f },
+        { MacroStepKind::Click, 0, 1270, 905, 0.0f, 1.0f },
+        { MacroStepKind::RepeatClick, 0, 960, 921, 3.0f, 1.0f },
+    };
+    return mc;
+}
+
+const char* MacroStepKindName(MacroStepKind kind) {
+    switch (kind) {
+        case MacroStepKind::Tap: return "Tap";
+        case MacroStepKind::Hold: return "Hold";
+        case MacroStepKind::Click: return "Click";
+        case MacroStepKind::RepeatClick: return "RepeatClick";
+    }
+    return "Tap";
+}
+
+} // namespace
+
 Config Config::Defaults() {
-    return Config{};
+    Config cfg{};
+    cfg.macroA = DefaultMacroA();
+    cfg.macroB = DefaultMacroB();
+    cfg.macroC = DefaultMacroC();
+    return cfg;
 }
 
 namespace {
@@ -94,7 +179,6 @@ Config Config::LoadFromFile(const std::string& path) {
     GetInt(kv, "timing.postfishdelayms", cfg.timing.postFishDelayMs);
     GetInt(kv, "timing.tholdms", cfg.timing.tHoldMs);
     GetInt(kv, "timing.clickpulsems", cfg.timing.clickPulseMs);
-    GetInt(kv, "timing.macrostepdelayms", cfg.timing.macroStepDelayMs);
     GetInt(kv, "timing.macromovedurationms", cfg.timing.macroMoveDurationMs);
     GetFloat(kv, "timing.detectionmaxhz", cfg.timing.detectionMaxHz);
 
@@ -131,6 +215,21 @@ Config Config::LoadFromFile(const std::string& path) {
     GetInt(kv, "ui.refreshintervalms", cfg.ui.refreshIntervalMs);
     GetFloat(kv, "ui.overlayrenderhz", cfg.ui.overlayRenderHz);
 
+    // Macro steps: kind/vk/x/y come from Config::Defaults() (code, not the
+    // file) and are never overridden here - only the two user-editable
+    // fields are read back, by step index, so a code change to the default
+    // sequence itself is never silently overridden by a stale file.
+    auto loadMacroOverrides = [&kv](MacroConfig& mc, const std::string& prefix) {
+        for (size_t i = 0; i < mc.steps.size(); ++i) {
+            std::string p = prefix + ".step" + std::to_string(i) + ".";
+            GetFloat(kv, p + "durationsec", mc.steps[i].durationSec);
+            GetFloat(kv, p + "delayaftersec", mc.steps[i].delayAfterSec);
+        }
+    };
+    loadMacroOverrides(cfg.macroA, "macroa");
+    loadMacroOverrides(cfg.macroB, "macrob");
+    loadMacroOverrides(cfg.macroC, "macroc");
+
     return cfg;
 }
 
@@ -154,7 +253,6 @@ bool Config::SaveToFile(const std::string& path) const {
     file << "timing.postFishDelayMs=" << timing.postFishDelayMs << "\n";
     file << "timing.tHoldMs=" << timing.tHoldMs << "\n";
     file << "timing.clickPulseMs=" << timing.clickPulseMs << "\n";
-    file << "timing.macroStepDelayMs=" << timing.macroStepDelayMs << "\n";
     file << "timing.macroMoveDurationMs=" << timing.macroMoveDurationMs << "\n";
     file << "timing.detectionMaxHz=" << timing.detectionMaxHz << "\n\n";
 
@@ -193,7 +291,30 @@ bool Config::SaveToFile(const std::string& path) const {
     file << "[ui]\n";
     file << "ui.debugModeDefault=" << (ui.debugModeDefault ? "true" : "false") << "\n";
     file << "ui.refreshIntervalMs=" << ui.refreshIntervalMs << "\n";
-    file << "ui.overlayRenderHz=" << ui.overlayRenderHz << "\n";
+    file << "ui.overlayRenderHz=" << ui.overlayRenderHz << "\n\n";
+
+    auto writeMacro = [&file](const MacroConfig& mc, const std::string& prefix) {
+        file << "# " << prefix << ".stepN.kind/vk/x/y are fixed in code (Config::Defaults) and\n";
+        file << "# written here only for reference - editing them has no effect. Only\n";
+        file << "# durationSec/delayAfterSec are read back on load; prefer the in-app\n";
+        file << "# macro config tabs over editing these directly.\n";
+        file << "[" << prefix << "]\n";
+        file << prefix << ".name=" << mc.name << "\n";
+        for (size_t i = 0; i < mc.steps.size(); ++i) {
+            const MacroStepConfig& s = mc.steps[i];
+            std::string p = prefix + ".step" + std::to_string(i) + ".";
+            file << p << "kind=" << MacroStepKindName(s.kind) << "\n";
+            file << p << "vk=" << static_cast<int>(s.vk) << "\n";
+            file << p << "x=" << s.clickX << "\n";
+            file << p << "y=" << s.clickY << "\n";
+            file << p << "durationSec=" << s.durationSec << "\n";
+            file << p << "delayAfterSec=" << s.delayAfterSec << "\n";
+        }
+        file << "\n";
+    };
+    writeMacro(macroA, "macroA");
+    writeMacro(macroB, "macroB");
+    writeMacro(macroC, "macroC");
 
     return true;
 }

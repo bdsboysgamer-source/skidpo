@@ -38,66 +38,24 @@ std::string NarrowFromWide(const std::wstring& w) {
     return out;
 }
 
+constexpr uint8_t kVkT = 0x54; // the fishing loop's own recast key (WAIT_T state)
+
 // ---- Macro sequences --------------------------------------------------
-// Two fixed, independent key/click sequences - not part of the fishing
-// loop at all. Every step is followed by macroStepDelayMs (default
-// 1000ms) before the next one starts; a Hold step's own duration comes
-// first, then that same inter-step delay on top of it.
-constexpr uint8_t kVkT = 0x54;
-constexpr uint8_t kVkD = 0x44;
-constexpr uint8_t kVkA = 0x41;
-
-enum class MacroActionKind { Tap, Hold, Click };
-struct MacroAction {
-    MacroActionKind kind;
-    uint8_t vk = 0;       // for Tap/Hold
-    int holdMs = 0;       // for Hold
-    int clickX = 0;       // for Click (absolute screen coordinates)
-    int clickY = 0;
-};
-
-const std::vector<MacroAction> kMacroSequenceA = {
-    { MacroActionKind::Tap, kVkT, 0, 0, 0 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 1270, 885 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 1270, 925 },
-    { MacroActionKind::Hold, kVkD, 500, 0, 0 },
-    { MacroActionKind::Hold, kVkT, 3000, 0, 0 },
-    { MacroActionKind::Hold, kVkA, 500, 0, 0 },
-    { MacroActionKind::Tap, kVkT, 0, 0, 0 },
-    { MacroActionKind::Click, 0, 0, 1270, 905 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-};
-
-const std::vector<MacroAction> kMacroSequenceB = {
-    { MacroActionKind::Tap, kVkT, 0, 0, 0 },
-    { MacroActionKind::Click, 0, 0, 960, 921 },
-    { MacroActionKind::Click, 0, 0, 775, 705 },
-    { MacroActionKind::Click, 0, 0, 775, 705 },
-    { MacroActionKind::Click, 0, 0, 1280, 890 },
-    { MacroActionKind::Click, 0, 0, 1280, 905 },
-    { MacroActionKind::Click, 0, 0, 1280, 945 },
-};
-
-const std::vector<MacroAction>& MacroSequenceFor(App::MacroId id) {
-    return (id == App::MacroId::A) ? kMacroSequenceA : kMacroSequenceB;
-}
+// The macro step definitions themselves (kind/vk/x/y, default timing) now
+// live in Config (MacroConfig/MacroStepConfig - see config/Config.h/.cpp)
+// since they're user-editable and persisted; App just ticks whichever
+// macro is active. RepeatClick's fixed autoclick cadence, not user-
+// configurable (only the burst's total duration is - see MacroStepConfig).
+constexpr float kRepeatClickIntervalMs = 150.0f;
 
 // ---- Macro hotkey chords -----------------------------------------------
 // RegisterHotKey can't express an arbitrary chord of plain keys (only one
 // non-modifier key plus Alt/Ctrl/Shift/Win), so these are detected by
 // directly polling physical key state instead - see CheckMacroHotkeys.
-constexpr uint8_t kChordVkH = 'H'; // H+6 -> macro A ("Sell Runo")
+constexpr uint8_t kChordVkH = 'H'; // H+6 -> macro A ("Sell Runo"); also H+7 -> macro C ("Sell Shiro")
 constexpr uint8_t kChordVkG = 'G'; // G+6 -> macro B ("Buy Fish Head")
 constexpr uint8_t kChordVk6 = '6';
+constexpr uint8_t kChordVk7 = '7';
 
 bool IsPhysicalKeyDown(uint8_t vk) {
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -105,8 +63,9 @@ bool IsPhysicalKeyDown(uint8_t vk) {
 
 } // namespace
 
-App::App(Config config)
+App::App(Config config, std::string configPath)
     : m_config(std::move(config))
+    , m_configPath(std::move(configPath))
     , m_input()
     , m_tracker(m_config.tracking)
     , m_controller(m_config.controller)
@@ -178,6 +137,51 @@ RoiConfig App::CurrentRoiConfig() const {
         roi.screenX += roi.secondaryScreenOffsetXPx;
     }
     return roi;
+}
+
+MacroConfig& App::MacroConfigRefFor(MacroId id) {
+    switch (id) {
+        case MacroId::A: return m_config.macroA;
+        case MacroId::B: return m_config.macroB;
+        case MacroId::C: return m_config.macroC;
+    }
+    return m_config.macroA;
+}
+
+const MacroConfig& App::MacroConfigRefFor(MacroId id) const {
+    switch (id) {
+        case MacroId::A: return m_config.macroA;
+        case MacroId::B: return m_config.macroB;
+        case MacroId::C: return m_config.macroC;
+    }
+    return m_config.macroA;
+}
+
+MacroConfig App::GetMacroConfig(MacroId id) const {
+    std::lock_guard<std::mutex> lock(m_macroConfigMutex);
+    return MacroConfigRefFor(id);
+}
+
+void App::ApplyMacroStepTiming(MacroId id, const std::vector<MacroStepConfig>& editedSteps) {
+    std::string macroName;
+    {
+        std::lock_guard<std::mutex> lock(m_macroConfigMutex);
+        MacroConfig& mc = MacroConfigRefFor(id);
+        macroName = mc.name;
+        if (editedSteps.size() != mc.steps.size()) {
+            LogLine("Macro config: edited step count mismatch, ignoring");
+            return;
+        }
+        for (size_t i = 0; i < mc.steps.size(); ++i) {
+            mc.steps[i].durationSec = std::max(0.0f, editedSteps[i].durationSec);
+            mc.steps[i].delayAfterSec = std::max(0.0f, editedSteps[i].delayAfterSec);
+        }
+    }
+    if (m_config.SaveToFile(m_configPath)) {
+        LogLine(macroName + ": settings saved");
+    } else {
+        LogLine("Macro config: failed to save " + m_configPath);
+    }
 }
 
 void App::SetStatusMessage(const std::wstring& msg) {
@@ -485,26 +489,37 @@ void App::TickStateMachine(const DetectionResult& raw, TimePoint now) {
 void App::CheckMacroHotkeys(TimePoint now) {
     bool aDown = IsPhysicalKeyDown(kChordVkH) && IsPhysicalKeyDown(kChordVk6);
     bool bDown = IsPhysicalKeyDown(kChordVkG) && IsPhysicalKeyDown(kChordVk6);
+    bool cDown = IsPhysicalKeyDown(kChordVkH) && IsPhysicalKeyDown(kChordVk7);
 
     if (aDown && !m_macroChordADown) OnMacroChordPressed(MacroId::A, now);
     m_macroChordADown = aDown;
 
     if (bDown && !m_macroChordBDown) OnMacroChordPressed(MacroId::B, now);
     m_macroChordBDown = bDown;
+
+    if (cDown && !m_macroChordCDown) OnMacroChordPressed(MacroId::C, now);
+    m_macroChordCDown = cDown;
 }
 
 void App::OnMacroChordPressed(MacroId id, TimePoint now) {
-    const char* label = (id == MacroId::A) ? "H+6 (Sell Runo)" : "G+6 (Buy Fish Head)";
+    const char* chord = (id == MacroId::A) ? "H+6" : (id == MacroId::B) ? "G+6" : "H+7";
+    std::string macroName;
+    {
+        std::lock_guard<std::mutex> lock(m_macroConfigMutex);
+        macroName = MacroConfigRefFor(id).name;
+    }
+    std::string label = std::string(chord) + " (" + macroName + ")";
+
     if (m_macroRunning) {
         if (m_activeMacroId == id) {
-            StopMacro(std::string(label) + ": macro stopped");
+            StopMacro(label + ": macro stopped");
         } else {
-            LogLine(std::string(label) + ": ignored, a different macro is already running");
+            LogLine(label + ": ignored, a different macro is already running");
         }
         return;
     }
     StartMacro(id, now);
-    LogLine(std::string(label) + ": macro started");
+    LogLine(label + ": macro started");
 }
 
 void App::StartMacro(MacroId id, TimePoint now) {
@@ -522,9 +537,14 @@ void App::StartMacro(MacroId id, TimePoint now) {
 void App::StopMacro(const std::string& reason) {
     // Release whatever key the sequence is currently mid-hold on before
     // stopping, so toggling a macro off can never leave e.g. T stuck down.
-    const auto& seq = MacroSequenceFor(m_activeMacroId);
-    if (m_macroHoldKeyDown && m_macroStepIndex < seq.size()) {
-        m_input.SetKey(seq[m_macroStepIndex].vk, false);
+    if (m_macroHoldKeyDown) {
+        uint8_t vk = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_macroConfigMutex);
+            const MacroConfig& mc = MacroConfigRefFor(m_activeMacroId);
+            if (m_macroStepIndex < mc.steps.size()) vk = mc.steps[m_macroStepIndex].vk;
+        }
+        if (vk != 0) m_input.SetKey(vk, false);
         m_macroHoldKeyDown = false;
     }
     m_macroRunning = false;
@@ -532,47 +552,80 @@ void App::StopMacro(const std::string& reason) {
 }
 
 void App::TickMacro(TimePoint now) {
-    const auto& seq = MacroSequenceFor(m_activeMacroId);
-    if (m_macroStepIndex >= seq.size()) {
-        m_macroStepIndex = 0; // defensive; TickMacro always wraps below before this could be hit
+    // Copy the one step this tick needs (cheap - a handful of scalars) and
+    // release the lock immediately, rather than holding it across the
+    // input calls below (ClickMouseLeftAt/TapKeyPulse block for tens of ms
+    // at a time), which would otherwise stall the UI thread's Save button.
+    MacroStepConfig step{};
+    size_t stepCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_macroConfigMutex);
+        const MacroConfig& mc = MacroConfigRefFor(m_activeMacroId);
+        stepCount = mc.steps.size();
+        if (stepCount == 0) return;
+        if (m_macroStepIndex >= stepCount) m_macroStepIndex = 0; // defensive; wraps below before this could normally be hit
+        step = mc.steps[m_macroStepIndex];
     }
-    const MacroAction& step = seq[m_macroStepIndex];
 
     if (m_macroPhase == MacroPhase::Acting) {
         switch (step.kind) {
-            case MacroActionKind::Tap:
+            case MacroStepKind::Tap:
                 m_input.TapKeyPulse(step.vk, m_config.timing.clickPulseMs);
                 m_macroPhase = MacroPhase::InterDelay;
                 m_macroPhaseStartedAt = now;
                 break;
-            case MacroActionKind::Click:
+            case MacroStepKind::Click:
                 m_input.ClickMouseLeftAt(step.clickX, step.clickY, m_config.timing.macroMoveDurationMs, m_config.timing.clickPulseMs);
                 m_macroPhase = MacroPhase::InterDelay;
                 m_macroPhaseStartedAt = now;
                 break;
-            case MacroActionKind::Hold:
+            case MacroStepKind::Hold:
                 if (!m_macroHoldKeyDown) {
                     m_input.SetKey(step.vk, true);
                     m_macroHoldKeyDown = true;
                     m_macroPhaseStartedAt = now; // start timing the hold itself
-                } else if (ElapsedMs(m_macroPhaseStartedAt, now) >= static_cast<float>(step.holdMs)) {
+                } else if (ElapsedMs(m_macroPhaseStartedAt, now) >= step.durationSec * 1000.0f) {
                     m_input.SetKey(step.vk, false);
                     m_macroHoldKeyDown = false;
                     m_macroPhase = MacroPhase::InterDelay;
                     m_macroPhaseStartedAt = now; // now the inter-step delay starts
                 }
                 break;
+            case MacroStepKind::RepeatClick: {
+                // An autoclick burst: the cursor glides to the target once,
+                // on the first click of the burst (detected by the last
+                // click having happened before this step's Acting phase
+                // began), then every subsequent click is a plain pulse in
+                // place at a fixed cadence - re-gliding to the same spot
+                // every 150ms would be pointless. Total burst length is
+                // step.durationSec (user-editable); the 150ms cadence
+                // itself is not.
+                bool isFirstClickOfBurst = m_macroLastRepeatClickAt < m_macroPhaseStartedAt;
+                if (isFirstClickOfBurst) {
+                    m_input.ClickMouseLeftAt(step.clickX, step.clickY, m_config.timing.macroMoveDurationMs, m_config.timing.clickPulseMs);
+                    m_macroLastRepeatClickAt = now;
+                } else if (ElapsedMs(m_macroLastRepeatClickAt, now) >= kRepeatClickIntervalMs) {
+                    m_input.ClickMouseLeftPulse(m_config.timing.clickPulseMs);
+                    m_macroLastRepeatClickAt = now;
+                }
+                if (ElapsedMs(m_macroPhaseStartedAt, now) >= step.durationSec * 1000.0f) {
+                    m_macroPhase = MacroPhase::InterDelay;
+                    m_macroPhaseStartedAt = now;
+                }
+                break;
+            }
         }
         return;
     }
 
-    // InterDelay: the fixed pause after every step, before the next one.
-    // The sequence loops indefinitely (wraps back to step 0) rather than
+    // InterDelay: the pause after this step, before the next one - now
+    // per-step (step.delayAfterSec) rather than one global duration. The
+    // sequence loops indefinitely (wraps back to step 0) rather than
     // stopping - pressing the active macro's chord again (OnMacroChordPressed,
     // via StopMacro) is the only way out.
-    if (ElapsedMs(m_macroPhaseStartedAt, now) >= static_cast<float>(m_config.timing.macroStepDelayMs)) {
+    if (ElapsedMs(m_macroPhaseStartedAt, now) >= step.delayAfterSec * 1000.0f) {
         ++m_macroStepIndex;
-        if (m_macroStepIndex >= seq.size()) {
+        if (m_macroStepIndex >= stepCount) {
             m_macroStepIndex = 0;
         }
         m_macroPhase = MacroPhase::Acting;
@@ -597,9 +650,12 @@ void App::UpdateSnapshot(const DetectionResult& raw, TimePoint now) {
     snap.detectionFps = m_detectionFpsEma;
     snap.activeScreenIndex = m_activeScreenIndex.load(std::memory_order_relaxed);
     snap.macroRunning = m_macroRunning;
-    snap.activeMacroId = (m_activeMacroId == MacroId::A) ? 0 : 1;
+    snap.activeMacroId = static_cast<int>(m_activeMacroId);
     snap.macroStepIndex = static_cast<int>(m_macroStepIndex);
-    snap.macroStepCount = static_cast<int>(MacroSequenceFor(m_activeMacroId).size());
+    {
+        std::lock_guard<std::mutex> lock(m_macroConfigMutex);
+        snap.macroStepCount = static_cast<int>(MacroConfigRefFor(m_activeMacroId).steps.size());
+    }
     {
         std::lock_guard<std::mutex> lock(m_statusMutex);
         snap.statusMessage = m_statusMessage;
