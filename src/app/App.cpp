@@ -38,6 +38,71 @@ std::string NarrowFromWide(const std::wstring& w) {
     return out;
 }
 
+// ---- Macro sequences --------------------------------------------------
+// Two fixed, independent key/click sequences - not part of the fishing
+// loop at all. Every step is followed by macroStepDelayMs (default
+// 1000ms) before the next one starts; a Hold step's own duration comes
+// first, then that same inter-step delay on top of it.
+constexpr uint8_t kVkT = 0x54;
+constexpr uint8_t kVkD = 0x44;
+constexpr uint8_t kVkA = 0x41;
+
+enum class MacroActionKind { Tap, Hold, Click };
+struct MacroAction {
+    MacroActionKind kind;
+    uint8_t vk = 0;       // for Tap/Hold
+    int holdMs = 0;       // for Hold
+    int clickX = 0;       // for Click (absolute screen coordinates)
+    int clickY = 0;
+};
+
+const std::vector<MacroAction> kMacroSequenceA = {
+    { MacroActionKind::Tap, kVkT, 0, 0, 0 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 1270, 885 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 1270, 925 },
+    { MacroActionKind::Hold, kVkD, 500, 0, 0 },
+    { MacroActionKind::Hold, kVkT, 3000, 0, 0 },
+    { MacroActionKind::Hold, kVkA, 500, 0, 0 },
+    { MacroActionKind::Tap, kVkT, 0, 0, 0 },
+    { MacroActionKind::Click, 0, 0, 1270, 905 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+};
+
+const std::vector<MacroAction> kMacroSequenceB = {
+    { MacroActionKind::Tap, kVkT, 0, 0, 0 },
+    { MacroActionKind::Click, 0, 0, 960, 921 },
+    { MacroActionKind::Click, 0, 0, 775, 705 },
+    { MacroActionKind::Click, 0, 0, 775, 705 },
+    { MacroActionKind::Click, 0, 0, 1280, 890 },
+    { MacroActionKind::Click, 0, 0, 1280, 905 },
+    { MacroActionKind::Click, 0, 0, 1280, 945 },
+};
+
+const std::vector<MacroAction>& MacroSequenceFor(App::MacroId id) {
+    return (id == App::MacroId::A) ? kMacroSequenceA : kMacroSequenceB;
+}
+
+// ---- Macro hotkey chords -----------------------------------------------
+// RegisterHotKey can't express an arbitrary chord of plain keys (only one
+// non-modifier key plus Alt/Ctrl/Shift/Win), so these are detected by
+// directly polling physical key state instead - see CheckMacroHotkeys.
+constexpr uint8_t kChordVkH = 'H'; // H+6 -> macro A ("Sell Runo")
+constexpr uint8_t kChordVkG = 'G'; // G+6 -> macro B ("Buy Fish Head")
+constexpr uint8_t kChordVk6 = '6';
+
+bool IsPhysicalKeyDown(uint8_t vk) {
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+
 } // namespace
 
 App::App(Config config)
@@ -100,6 +165,21 @@ void App::ToggleDebug() {
     LogLine(newVal ? "F3: debug mode ON" : "F3: debug mode OFF");
 }
 
+void App::ToggleScreen() {
+    int newVal = (m_activeScreenIndex.load(std::memory_order_relaxed) == 0) ? 1 : 0;
+    m_activeScreenIndex.store(newVal, std::memory_order_relaxed);
+    LogLine(newVal == 0 ? "F4: switched to screen 1" : "F4: switched to screen 2 (+" +
+            std::to_string(m_config.roi.secondaryScreenOffsetXPx) + "px)");
+}
+
+RoiConfig App::CurrentRoiConfig() const {
+    RoiConfig roi = m_config.roi;
+    if (m_activeScreenIndex.load(std::memory_order_relaxed) != 0) {
+        roi.screenX += roi.secondaryScreenOffsetXPx;
+    }
+    return roi;
+}
+
 void App::SetStatusMessage(const std::wstring& msg) {
     {
         std::lock_guard<std::mutex> lock(m_statusMutex);
@@ -117,22 +197,37 @@ UiSnapshot App::GetSnapshot() const {
 // Capture thread: DXGI Desktop Duplication -> newest-frame mailbox
 // -------------------------------------------------------------------
 void App::CaptureThreadMain() {
+    RoiConfig activeRoi = CurrentRoiConfig();
     std::wstring err;
-    if (!m_duplication.Initialize(m_config.roi, err)) {
+    if (!m_duplication.Initialize(activeRoi, err)) {
         SetStatusMessage(L"Capture init failed: " + err);
     } else {
-        SetStatusMessage(L"Capture initialized (" + std::to_wstring(m_config.roi.CaptureWidth()) + L"x"
-                          + std::to_wstring(m_config.roi.CaptureHeight()) + L" @ screen "
-                          + std::to_wstring(m_config.roi.CaptureOriginScreenX()) + L","
-                          + std::to_wstring(m_config.roi.CaptureOriginScreenY()) + L")");
+        SetStatusMessage(L"Capture initialized (" + std::to_wstring(activeRoi.CaptureWidth()) + L"x"
+                          + std::to_wstring(activeRoi.CaptureHeight()) + L" @ screen "
+                          + std::to_wstring(activeRoi.CaptureOriginScreenX()) + L","
+                          + std::to_wstring(activeRoi.CaptureOriginScreenY()) + L")");
     }
 
     TimePoint lastFrameTime = Clock::now();
 
     while (!m_stopRequested.load(std::memory_order_relaxed)) {
+        // F4 (App::ToggleScreen) can move the ROI to a different monitor
+        // at any time. DXGI Desktop Duplication is bound to one specific
+        // output, so a screen change requires tearing down and
+        // re-initializing against the new monitor - done here, on the
+        // capture thread itself, since the duplication's D3D11/DXGI
+        // objects aren't safe to touch from another thread concurrently
+        // with this loop's own use of them.
+        RoiConfig roiNow = CurrentRoiConfig();
+        if (roiNow.screenX != activeRoi.screenX || roiNow.screenY != activeRoi.screenY) {
+            LogLine("Capture ROI screen changed - reinitializing Desktop Duplication");
+            m_duplication.Shutdown();
+            activeRoi = roiNow;
+        }
+
         if (!m_duplication.IsInitialized()) {
             std::wstring reinitErr;
-            if (m_duplication.Initialize(m_config.roi, reinitErr)) {
+            if (m_duplication.Initialize(activeRoi, reinitErr)) {
                 SetStatusMessage(L"Capture (re)initialized");
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -141,7 +236,7 @@ void App::CaptureThreadMain() {
         }
 
         CapturedFrame frame;
-        CaptureStatus status = m_duplication.AcquireFrame(m_config.roi, frame, 100);
+        CaptureStatus status = m_duplication.AcquireFrame(activeRoi, frame, 100);
 
         switch (status) {
             case CaptureStatus::Ok: {
@@ -214,11 +309,31 @@ void App::RunDetectionLoop() {
                 }
             }
             if (m_stopRequested.load(std::memory_order_relaxed)) break;
+
+            // Polled here - not gated behind gotFrame/detectionMaxHz below -
+            // so the M+S+1 / M+S+B macro chords stay responsive even when
+            // the screen is static and frames stop arriving; this loop
+            // still wakes at least every ~50ms via the wait_for above.
+            CheckMacroHotkeys(Clock::now());
+
             if (!gotFrame) continue;
 
             TimePoint now = Clock::now();
             float dt = std::chrono::duration<float>(now - lastTick).count();
+
+            // Desktop Duplication can hand over new frames far faster than
+            // is useful for a small border scan (400+fps observed, driven
+            // by ANY compositor update anywhere on the display). Frames
+            // arriving faster than the configured cap are dropped here,
+            // not queued - low latency over processing every historical
+            // frame, same philosophy as the capture thread's own
+            // duplicate-frame skip.
+            if (m_config.timing.detectionMaxHz > 0.0f) {
+                float minIntervalSec = 1.0f / m_config.timing.detectionMaxHz;
+                if (dt < minIntervalSec) continue;
+            }
             lastTick = now;
+
             if (dt > 0.0001f) {
                 m_detectionFpsEma = m_detectionFpsEma * 0.9f + (1.0f / dt) * 0.1f;
             }
@@ -243,7 +358,17 @@ void App::RunDetectionLoop() {
             DetectionResult raw = detector.Detect(frame, debugMode, targetPrior);
             m_tracker.Update(raw, now, clampedDt);
 
-            TickStateMachine(raw, now);
+            // The macro sequences are fixed, independent key/click loops -
+            // unrelated to fishing, and mutually exclusive with the
+            // fishing state machine's own input control (both would
+            // otherwise fight over the mouse/keyboard). Detection/
+            // tracking above still runs normally either way; only the
+            // control decision branches.
+            if (m_macroRunning) {
+                TickMacro(now);
+            } else {
+                TickStateMachine(raw, now);
+            }
             UpdateSnapshot(raw, now);
         }
     } catch (const std::exception& e) {
@@ -328,18 +453,26 @@ void App::TickStateMachine(const DetectionResult& raw, TimePoint now) {
                 }
                 if (ElapsedMs(*m_bothAbsentSince, now) >= static_cast<float>(m_config.timing.noObjectTimeoutMs)) {
                     m_input.SetMouseLeft(false);
-                    m_input.SetKeyT(true);
                     m_controller.Reset();
-                    EnterState(BotState::WaitT, now);
+                    EnterState(BotState::PostFishDelay, now);
                 }
             } else {
                 m_bothAbsentSince.reset();
             }
             break;
         }
+        case BotState::PostFishDelay: {
+            // Mouse is already released here; T isn't held yet - just a
+            // plain pause before starting the T-hold sequence.
+            if (ElapsedMs(m_stateEnteredAt, now) >= static_cast<float>(m_config.timing.postFishDelayMs)) {
+                m_input.SetKey(kVkT, true);
+                EnterState(BotState::WaitT, now);
+            }
+            break;
+        }
         case BotState::WaitT: {
             if (ElapsedMs(m_stateEnteredAt, now) >= static_cast<float>(m_config.timing.tHoldMs)) {
-                m_input.SetKeyT(false);
+                m_input.SetKey(kVkT, false);
                 m_input.ClickMouseLeftPulse(m_config.timing.clickPulseMs);
                 m_bothPresentSince.reset();
                 EnterState(BotState::Casting, now);
@@ -349,21 +482,124 @@ void App::TickStateMachine(const DetectionResult& raw, TimePoint now) {
     }
 }
 
+void App::CheckMacroHotkeys(TimePoint now) {
+    bool aDown = IsPhysicalKeyDown(kChordVkH) && IsPhysicalKeyDown(kChordVk6);
+    bool bDown = IsPhysicalKeyDown(kChordVkG) && IsPhysicalKeyDown(kChordVk6);
+
+    if (aDown && !m_macroChordADown) OnMacroChordPressed(MacroId::A, now);
+    m_macroChordADown = aDown;
+
+    if (bDown && !m_macroChordBDown) OnMacroChordPressed(MacroId::B, now);
+    m_macroChordBDown = bDown;
+}
+
+void App::OnMacroChordPressed(MacroId id, TimePoint now) {
+    const char* label = (id == MacroId::A) ? "H+6 (Sell Runo)" : "G+6 (Buy Fish Head)";
+    if (m_macroRunning) {
+        if (m_activeMacroId == id) {
+            StopMacro(std::string(label) + ": macro stopped");
+        } else {
+            LogLine(std::string(label) + ": ignored, a different macro is already running");
+        }
+        return;
+    }
+    StartMacro(id, now);
+    LogLine(std::string(label) + ": macro started");
+}
+
+void App::StartMacro(MacroId id, TimePoint now) {
+    m_activeMacroId = id;
+    // Clean slate: don't let a mouse button the fishing controller happened
+    // to be holding mid-reel interfere with the macro's own clicks.
+    m_input.SetMouseLeft(false);
+    m_macroStepIndex = 0;
+    m_macroPhase = MacroPhase::Acting;
+    m_macroPhaseStartedAt = now;
+    m_macroHoldKeyDown = false;
+    m_macroRunning = true;
+}
+
+void App::StopMacro(const std::string& reason) {
+    // Release whatever key the sequence is currently mid-hold on before
+    // stopping, so toggling a macro off can never leave e.g. T stuck down.
+    const auto& seq = MacroSequenceFor(m_activeMacroId);
+    if (m_macroHoldKeyDown && m_macroStepIndex < seq.size()) {
+        m_input.SetKey(seq[m_macroStepIndex].vk, false);
+        m_macroHoldKeyDown = false;
+    }
+    m_macroRunning = false;
+    LogLine(reason);
+}
+
+void App::TickMacro(TimePoint now) {
+    const auto& seq = MacroSequenceFor(m_activeMacroId);
+    if (m_macroStepIndex >= seq.size()) {
+        m_macroStepIndex = 0; // defensive; TickMacro always wraps below before this could be hit
+    }
+    const MacroAction& step = seq[m_macroStepIndex];
+
+    if (m_macroPhase == MacroPhase::Acting) {
+        switch (step.kind) {
+            case MacroActionKind::Tap:
+                m_input.TapKeyPulse(step.vk, m_config.timing.clickPulseMs);
+                m_macroPhase = MacroPhase::InterDelay;
+                m_macroPhaseStartedAt = now;
+                break;
+            case MacroActionKind::Click:
+                m_input.ClickMouseLeftAt(step.clickX, step.clickY, m_config.timing.macroMoveDurationMs, m_config.timing.clickPulseMs);
+                m_macroPhase = MacroPhase::InterDelay;
+                m_macroPhaseStartedAt = now;
+                break;
+            case MacroActionKind::Hold:
+                if (!m_macroHoldKeyDown) {
+                    m_input.SetKey(step.vk, true);
+                    m_macroHoldKeyDown = true;
+                    m_macroPhaseStartedAt = now; // start timing the hold itself
+                } else if (ElapsedMs(m_macroPhaseStartedAt, now) >= static_cast<float>(step.holdMs)) {
+                    m_input.SetKey(step.vk, false);
+                    m_macroHoldKeyDown = false;
+                    m_macroPhase = MacroPhase::InterDelay;
+                    m_macroPhaseStartedAt = now; // now the inter-step delay starts
+                }
+                break;
+        }
+        return;
+    }
+
+    // InterDelay: the fixed pause after every step, before the next one.
+    // The sequence loops indefinitely (wraps back to step 0) rather than
+    // stopping - pressing the active macro's chord again (OnMacroChordPressed,
+    // via StopMacro) is the only way out.
+    if (ElapsedMs(m_macroPhaseStartedAt, now) >= static_cast<float>(m_config.timing.macroStepDelayMs)) {
+        ++m_macroStepIndex;
+        if (m_macroStepIndex >= seq.size()) {
+            m_macroStepIndex = 0;
+        }
+        m_macroPhase = MacroPhase::Acting;
+        m_macroPhaseStartedAt = now;
+    }
+}
+
 void App::UpdateSnapshot(const DetectionResult& raw, TimePoint now) {
     UiSnapshot snap;
     snap.enabled = m_enabled.load(std::memory_order_relaxed);
     snap.state = m_state;
     snap.stateElapsedMs = ElapsedMs(m_stateEnteredAt, now);
-    snap.roi = m_config.roi;
+    snap.roi = CurrentRoiConfig(); // reflects F4 screen toggle - the overlay positions itself off this
     snap.controllerConfig = m_config.controller;
     snap.debugMode = m_debugMode.load(std::memory_order_relaxed);
     snap.lastDetection = raw;
     snap.trackedMarker = m_tracker.Marker();
     snap.trackedTarget = m_tracker.Target();
     snap.mouseHeld = m_input.IsMouseLeftDown();
-    snap.tHeld = m_input.IsKeyTDown();
+    snap.tHeld = m_input.IsKeyDown(kVkT);
     snap.captureFps = m_captureFpsEma;
     snap.detectionFps = m_detectionFpsEma;
+    snap.activeScreenIndex = m_activeScreenIndex.load(std::memory_order_relaxed);
+    snap.macroRunning = m_macroRunning;
+    snap.activeMacroId = (m_activeMacroId == MacroId::A) ? 0 : 1;
+    snap.macroStepIndex = static_cast<int>(m_macroStepIndex);
+    snap.macroStepCount = static_cast<int>(MacroSequenceFor(m_activeMacroId).size());
     {
         std::lock_guard<std::mutex> lock(m_statusMutex);
         snap.statusMessage = m_statusMessage;

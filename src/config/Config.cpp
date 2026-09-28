@@ -86,12 +86,17 @@ Config Config::LoadFromFile(const std::string& path) {
     GetInt(kv, "roi.width", cfg.roi.width);
     GetInt(kv, "roi.height", cfg.roi.height);
     GetInt(kv, "roi.flankpixels", cfg.roi.flankPixels);
+    GetInt(kv, "roi.secondaryscreenoffsetxpx", cfg.roi.secondaryScreenOffsetXPx);
 
     GetInt(kv, "timing.castingdetectdebouncems", cfg.timing.castingDetectDebounceMs);
     GetInt(kv, "timing.castmaxwaitms", cfg.timing.castMaxWaitMs);
     GetInt(kv, "timing.noobjecttimeoutms", cfg.timing.noObjectTimeoutMs);
+    GetInt(kv, "timing.postfishdelayms", cfg.timing.postFishDelayMs);
     GetInt(kv, "timing.tholdms", cfg.timing.tHoldMs);
     GetInt(kv, "timing.clickpulsems", cfg.timing.clickPulseMs);
+    GetInt(kv, "timing.macrostepdelayms", cfg.timing.macroStepDelayMs);
+    GetInt(kv, "timing.macromovedurationms", cfg.timing.macroMoveDurationMs);
+    GetFloat(kv, "timing.detectionmaxhz", cfg.timing.detectionMaxHz);
 
     GetFloat(kv, "detection.markerminpixelscore", cfg.detection.markerMinPixelScore);
     GetInt(kv, "detection.targetbordercolumnroilocalx", cfg.detection.targetBorderColumnRoiLocalX);
@@ -124,6 +129,7 @@ Config Config::LoadFromFile(const std::string& path) {
 
     GetBool(kv, "ui.debugmodedefault", cfg.ui.debugModeDefault);
     GetInt(kv, "ui.refreshintervalms", cfg.ui.refreshIntervalMs);
+    GetFloat(kv, "ui.overlayrenderhz", cfg.ui.overlayRenderHz);
 
     return cfg;
 }
@@ -138,14 +144,19 @@ bool Config::SaveToFile(const std::string& path) const {
     file << "roi.screenY=" << roi.screenY << "\n";
     file << "roi.width=" << roi.width << "\n";
     file << "roi.height=" << roi.height << "\n";
-    file << "roi.flankPixels=" << roi.flankPixels << "\n\n";
+    file << "roi.flankPixels=" << roi.flankPixels << "\n";
+    file << "roi.secondaryScreenOffsetXPx=" << roi.secondaryScreenOffsetXPx << "\n\n";
 
     file << "[timing]\n";
     file << "timing.castingDetectDebounceMs=" << timing.castingDetectDebounceMs << "\n";
     file << "timing.castMaxWaitMs=" << timing.castMaxWaitMs << "\n";
     file << "timing.noObjectTimeoutMs=" << timing.noObjectTimeoutMs << "\n";
+    file << "timing.postFishDelayMs=" << timing.postFishDelayMs << "\n";
     file << "timing.tHoldMs=" << timing.tHoldMs << "\n";
-    file << "timing.clickPulseMs=" << timing.clickPulseMs << "\n\n";
+    file << "timing.clickPulseMs=" << timing.clickPulseMs << "\n";
+    file << "timing.macroStepDelayMs=" << timing.macroStepDelayMs << "\n";
+    file << "timing.macroMoveDurationMs=" << timing.macroMoveDurationMs << "\n";
+    file << "timing.detectionMaxHz=" << timing.detectionMaxHz << "\n\n";
 
     file << "[detection]\n";
     file << "detection.markerMinPixelScore=" << detection.markerMinPixelScore << "\n";
@@ -182,6 +193,7 @@ bool Config::SaveToFile(const std::string& path) const {
     file << "[ui]\n";
     file << "ui.debugModeDefault=" << (ui.debugModeDefault ? "true" : "false") << "\n";
     file << "ui.refreshIntervalMs=" << ui.refreshIntervalMs << "\n";
+    file << "ui.overlayRenderHz=" << ui.overlayRenderHz << "\n";
 
     return true;
 }

@@ -62,7 +62,7 @@ target_link_libraries(fishingbot PRIVATE
     dxgi
     user32
     gdi32
-    msimg32
+    gdiplus
 )
 
 set_target_properties(fishingbot PROPERTIES

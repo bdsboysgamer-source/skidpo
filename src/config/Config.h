@@ -23,8 +23,22 @@ struct TimingConfig {
     int castMaxWaitMs = 7000;
 
     int noObjectTimeoutMs = 2000;     // both raw marker+target absent -> completion
+    int postFishDelayMs = 2000;       // FISHING completion -> WAIT_T: mouse already released, T not yet held
     int tHoldMs = 3000;               // T held duration
     int clickPulseMs = 60;            // press->release duration for a "click"
+    int macroStepDelayMs = 1000;      // macro sequences: delay after each step before the next one starts
+    int macroMoveDurationMs = 200;    // macro sequences: cursor glide time for each click's move-to-target
+
+    // Caps how often a captured frame actually gets run through
+    // detect->track->control->input. Desktop Duplication can hand over
+    // new frames far faster than this (driven by any compositor update
+    // anywhere on the display, not just within the ROI - 400+fps was
+    // observed), which is wasted work well past the point of being useful
+    // for a 24px border scan. Frames arriving faster than this are
+    // dropped, not queued - consistent with "low latency over processing
+    // every historical frame". 0 disables the cap (uncapped, previous
+    // behavior).
+    float detectionMaxHz = 240.0f;
 };
 
 struct DetectionConfig {
@@ -93,7 +107,13 @@ struct ControllerConfig {
 
 struct UiConfig {
     bool debugModeDefault = true;
-    int refreshIntervalMs = 150;
+    int refreshIntervalMs = 150;   // StatusWindow text repaint + DebugOverlay show/hide poll (WM_TIMER; Windows floors this at 10ms/100Hz regardless)
+
+    // DebugOverlay's own visual repaint rate, driven by a dedicated
+    // render thread rather than WM_TIMER - WM_TIMER cannot go faster than
+    // USER_TIMER_MINIMUM (10ms/100Hz), which isn't enough headroom for a
+    // smooth high-refresh-rate overlay.
+    float overlayRenderHz = 120.0f;
 };
 
 struct Config {

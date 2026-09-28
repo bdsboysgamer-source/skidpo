@@ -66,6 +66,16 @@ struct RoiConfig {
     int height = 390;        // bar height in pixels
     int flankPixels = 16;    // background sample flank on each side
 
+    // F4 toggles between screen 1 (this screenX/screenY as configured
+    // above) and screen 2, whose ROI is assumed to sit at exactly this
+    // many pixels to the right on the virtual desktop (the common
+    // side-by-side same-resolution monitor layout) - see
+    // App::CurrentRoiConfig(). Not a robust general multi-monitor
+    // solution (e.g. does not handle a differently-sized or vertically
+    // offset second monitor), just this specific, explicitly requested
+    // shortcut.
+    int secondaryScreenOffsetXPx = 1920;
+
     int CaptureWidth() const { return width + 2 * flankPixels; }
     int CaptureHeight() const { return height; }
 
@@ -186,6 +196,7 @@ enum class BotState {
     Off,
     Casting,
     Fishing,
+    PostFishDelay,
     WaitT,
 };
 
@@ -194,6 +205,7 @@ inline const char* ToString(BotState s) {
         case BotState::Off: return "OFF";
         case BotState::Casting: return "CASTING";
         case BotState::Fishing: return "FISHING";
+        case BotState::PostFishDelay: return "POST_FISH_DELAY";
         case BotState::WaitT: return "WAIT_T";
     }
     return "?";

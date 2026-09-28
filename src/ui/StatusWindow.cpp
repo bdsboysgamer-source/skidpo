@@ -129,6 +129,9 @@ void StatusWindow::OnCreate(HWND hwnd) {
     if (!RegisterHotKey(hwnd, kHotkeyDebugId, 0, VK_F3)) {
         std::wcerr << L"RegisterHotKey(F3) failed, error=" << GetLastError() << std::endl;
     }
+    if (!RegisterHotKey(hwnd, kHotkeyScreenId, 0, VK_F4)) {
+        std::wcerr << L"RegisterHotKey(F4) failed, error=" << GetLastError() << std::endl;
+    }
     SetTimer(hwnd, kTimerId, static_cast<UINT>(std::max(30, m_app.UiRefreshIntervalMs())), nullptr);
 }
 
@@ -136,6 +139,7 @@ void StatusWindow::OnDestroy() {
     UnregisterHotKey(m_hwnd, kHotkeyToggleId);
     UnregisterHotKey(m_hwnd, kHotkeyExitId);
     UnregisterHotKey(m_hwnd, kHotkeyDebugId);
+    UnregisterHotKey(m_hwnd, kHotkeyScreenId);
     KillTimer(m_hwnd, kTimerId);
     m_hwnd = nullptr; // avoid a stale-handle DestroyWindow call from our own destructor
 }
@@ -153,6 +157,10 @@ void StatusWindow::OnHotkey(int id) {
         case kHotkeyDebugId:
             std::wcout << L"[hotkey] F3 pressed" << std::endl;
             m_app.ToggleDebug();
+            break;
+        case kHotkeyScreenId:
+            std::wcout << L"[hotkey] F4 pressed" << std::endl;
+            m_app.ToggleScreen();
             break;
         default:
             break;
@@ -229,11 +237,12 @@ void StatusWindow::RenderStatusText(HDC hdc, int x, int y, const UiSnapshot& sna
 
     std::wostringstream roiSs;
     roiSs << L"ROI: screen(" << snap.roi.screenX << L"," << snap.roi.screenY << L")  "
-          << snap.roi.width << L"x" << snap.roi.height << L"  flank=" << snap.roi.flankPixels;
+          << snap.roi.width << L"x" << snap.roi.height << L"  flank=" << snap.roi.flankPixels
+          << L"  [screen " << (snap.activeScreenIndex + 1) << L", F4 to switch]";
     put(roiSs.str(), RGB(190, 190, 190));
     ++line;
 
-    put(L"-- Raw detection (drives the 5s completion timer) --", RGB(150, 150, 210));
+    put(L"-- Raw detection (drives the completion timer) --", RGB(150, 150, 210));
     put(FormatBand(L"Marker", snap.lastDetection.marker), RGB(230, 90, 90));
     put(FormatBand(L"Target", snap.lastDetection.target), RGB(90, 210, 120));
     ++line;
@@ -256,12 +265,21 @@ void StatusWindow::RenderStatusText(HDC hdc, int x, int y, const UiSnapshot& sna
         RGB(150, 150, 210));
     ++line;
 
+    if (snap.macroRunning) {
+        std::wostringstream macroSs;
+        macroSs << (snap.activeMacroId == 0 ? L"Sell Runo (H+6)" : L"Buy Fish Head (G+6)")
+                << L": running (step " << (snap.macroStepIndex + 1) << L"/" << snap.macroStepCount << L")";
+        put(macroSs.str(), RGB(235, 170, 235));
+    } else {
+        put(L"Macro: idle (H+6 Sell Runo / G+6 Buy Fish Head)", RGB(140, 140, 150));
+    }
+
     if (!snap.statusMessage.empty()) {
         put(L"Status: " + snap.statusMessage, RGB(230, 150, 60));
     }
 
     put(L"", RGB(0,0,0));
-    put(L"F1 = toggle bot   F2 = exit   F3 = toggle debug", RGB(140, 140, 140));
+    put(L"F1 bot  F2 exit  F3 debug  F4 screen  H+6 sell runo  G+6 buy fish head", RGB(140, 140, 140));
 }
 
 } // namespace fb

@@ -43,6 +43,41 @@ Hotkeys (global, via `RegisterHotKey` - work regardless of focus):
 - **F1** - toggle the bot on/off
 - **F2** - exit
 - **F3** - toggle the debug schematic panel
+- **F4** - switch the ROI between screen 1 (as configured) and screen 2,
+  assumed to sit `roi.secondaryScreenOffsetXPx` (default 1920) pixels to
+  the right on the virtual desktop - the common side-by-side same-
+  resolution dual-monitor layout. Not a general multi-monitor solution
+  (doesn't handle a differently-sized or vertically-offset second
+  monitor); switching re-initializes Desktop Duplication against the new
+  monitor and moves the debug overlay to follow it.
+
+Macro chords (polled directly via `GetAsyncKeyState`, not `RegisterHotKey` -
+see `App::CheckMacroHotkeys` in `src/app/App.cpp` for why: RegisterHotKey
+can only express one non-modifier key plus Alt/Ctrl/Shift/Win, not an
+arbitrary chord of plain keys):
+
+- **H+6** - toggles **Sell Runo** (macro A): a fixed key/click sequence
+  (`kMacroSequenceA` in `src/app/App.cpp`) with a 1-second pause after
+  every step.
+- **G+6** - toggles **Buy Fish Head** (macro B): a second, independent
+  sequence (`kMacroSequenceB`), same timing/looping/input behavior as
+  Sell Runo.
+
+Either macro, once started, loops indefinitely (wraps back to its first
+step after the last) rather than running once - pressing that same macro's
+chord again is what stops it, safely releasing any currently-held key
+first so nothing is left stuck down. Starting one while the other is
+already running is ignored (only one macro runs at a time). Mutually
+exclusive with the fishing state machine's own input control while either
+runs (the fishing loop is paused, not fought over); the left mouse button
+is released first as a clean slate. Each click step moves the cursor
+smoothly (ease-in-out, over `timing.macroMoveDurationMs`, default 200ms)
+from wherever it currently is to the target position rather than
+teleporting there.
+
+When debug mode is on, a small always-on-top block listing all hotkeys and
+macro chords is pinned to the primary monitor's top-left corner,
+independent of where the ROI/debug overlay itself is positioned.
 
 `config/config.ini` is created next to the executable on first run (from
 built-in defaults) and reloaded on every launch; edit it to tune the ROI,
@@ -51,7 +86,7 @@ recompiling.
 
 ## Behavior
 
-State machine: `OFF -> CASTING -> FISHING -> WAIT_T -> CASTING -> ...`
+State machine: `OFF -> CASTING -> FISHING -> POST_FISH_DELAY -> WAIT_T -> CASTING -> ...`
 
 - **OFF -> CASTING**: on enable, a single left-click pulse.
 - **CASTING -> FISHING**: detection-driven, not a fixed wait - moves to
@@ -66,7 +101,10 @@ State machine: `OFF -> CASTING -> FISHING -> WAIT_T -> CASTING -> ...`
   driven **only** by raw per-frame detections of marker+target both being
   absent - the temporal tracker's coasted/predicted state can never
   satisfy or reset this timer by itself.
-- **WAIT_T**: mouse released, `T` held for `tHoldMs` (default 3000ms),
+- **POST_FISH_DELAY**: mouse already released, `T` not held yet - a plain
+  pause (`postFishDelayMs`, default 2000ms) before starting the T-hold
+  sequence.
+- **WAIT_T**: `T` held for `tHoldMs` (default 3000ms),
   then one click pulse, straight back to `CASTING`.
 
 Disabling the bot (F1) or exiting (F2) at any point immediately releases
@@ -131,7 +169,12 @@ DXGI Desktop Duplication  -->   newest-frame mailbox  -->    Detector (raw, stat
   down/up transition when the logical state changes; `EmergencyReleaseAll()`
   is safe from any thread/any number of times and is called on disable,
   exit, and both C++ and structured (SEH) exceptions in the detection
-  thread.
+  thread. Mouse movement (`MoveMouseSmooth`) is sent as a sequence of
+  **relative** `SendInput` deltas (`MOUSEEVENTF_MOVE`, not
+  `MOUSEEVENTF_ABSOLUTE`/`SetCursorPos`) - a game reading raw input or
+  DirectInput mouse deltas rather than polling absolute cursor position
+  never observes a `SetCursorPos` teleport at all, so relative deltas are
+  what's needed to look like an actual physical mouse to it.
 - `src/ui/StatusWindow.h` - the main control window: text status readout
   (state, timers, raw/tracked values, fps, input state) and the F1/F2/F3
   global hotkeys.
